@@ -1,0 +1,34 @@
+# Combined image for Render.com: builds the frontend, bundles the exercise
+# media, and runs both the Node API and nginx in a single container
+# (Render runs one container per web service).
+
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci 2>/dev/null || npm install
+COPY frontend/ ./
+RUN npm run build
+
+FROM alpine/git AS media
+RUN git clone --depth 1 https://github.com/hasaneyldrm/exercises-dataset /tmp/ds
+
+FROM node:22-alpine
+RUN apk add --no-cache nginx gettext
+
+WORKDIR /app/api
+COPY api/package.json api/package-lock.json* ./
+RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev
+COPY api/ ./
+
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=media /tmp/ds/images/*.jpg /usr/share/nginx/html/img/
+COPY --from=media /tmp/ds/videos/*.gif /usr/share/nginx/html/gif/
+
+RUN mkdir -p /etc/nginx/templates
+COPY nginx.render.conf.template /etc/nginx/templates/default.conf.template
+COPY render-start.sh /start.sh
+RUN chmod +x /start.sh
+
+ENV DATA_DIR=/data
+EXPOSE 10000
+CMD ["/start.sh"]
